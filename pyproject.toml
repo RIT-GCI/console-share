@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-console-share = "console-share:main"
+console-share = "console_share:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["console-share"]
+packages = ["console_share"]
