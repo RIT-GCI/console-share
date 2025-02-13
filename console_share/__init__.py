@@ -13,6 +13,8 @@ import urllib.parse
 import hashlib
 import configparser
 import time
+import socket
+from tabulate import tabulate
 
 # Configure logging
 logging.basicConfig(
@@ -315,12 +317,52 @@ class ProxyManager:
                     proxy = IncusConsoleProxy(remote, project, instance, port)
                     self.proxies.append(proxy)
 
+    def get_local_ip(self):
+        """Get the local IP address of the main network interface"""
+        try:
+            # Create a socket and connect to a public DNS to determine local IP
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            return local_ip
+        except Exception:
+            return "127.0.0.1"  # Fallback to localhost if unable to determine
+
+    def print_instance_table(self):
+        """Print a table of instances and their connection information"""
+        local_ip = self.get_local_ip()
+        
+        # Prepare table data
+        table_data = []
+        for proxy in self.proxies:
+            if proxy.is_container:
+                command = f"telnet {local_ip} {proxy.listen_port}"
+            else:
+                command = f"remote-viewer spice://{local_ip}:{proxy.listen_port}"
+            
+            table_data.append([
+                proxy.instance,
+                f"{local_ip}:{proxy.listen_port}",
+                "Container" if proxy.is_container else "VM",
+                command
+            ])
+        
+        # Print the table
+        headers = ["Instance", "Address", "Type", "Connection Command"]
+        print("\nConsole Share Instances:")
+        print(tabulate(table_data, headers=headers, tablefmt="grid"))
+        print()  # Add a blank line after the table
+
     async def start_all(self):
         """Start all proxy instances"""
         tasks = []
         for proxy in self.proxies:
             tasks.append(asyncio.create_task(proxy.start_proxy()))
         await asyncio.gather(*tasks)
+        
+        # Print instance table after all proxies are started
+        self.print_instance_table()
 
 def get_current_remote():
     """Get the current remote from incus remote ls"""
