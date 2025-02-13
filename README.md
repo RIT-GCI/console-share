@@ -14,7 +14,7 @@ A Python utility to proxy Incus container and VM consoles to TCP ports using web
 
 - Python 3.7 or higher
 - Incus installed and configured
-- websocat binary (included in the package)
+- websocat binary (included in the package, source: https://github.com/vi/websocat)
 
 ## Installation
 
