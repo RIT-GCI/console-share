@@ -141,4 +141,9 @@ right now its going the golang findCommand function to do this, find a good way 
 1.1:
 update it to allow for a autogeneretion of a config, using --generate take the current active project and remote (so no switching) look at all the instances and set --type=vga for all VIRTUAL-MACHINES and incus shell for containers and write it out to disk
 
+2.0: 
+update this project to use a toml config for a list of instances to proxy, its currently missing this and fffics@fffics-workbench:~$ console-share --generate console
+Error generating config: Object of type 'NoneType' is not TOML serializable
+
+doesn't work, it really should be config based only, remove the commands as you don't need them. read the readme for more details about the project. but I want a config file to list out instances to be proxied as the main source of config and using switches
 ```

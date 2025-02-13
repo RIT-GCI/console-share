@@ -1,5 +1,6 @@
 import os
 import tomli
+import tomli_w
 from pathlib import Path
 from typing import Dict, Any
 
@@ -14,7 +15,8 @@ DEFAULT_CONFIG = {
     },
     "shell": {
         "term": "xterm-256color",
-    }
+    },
+    "instances": {}
 }
 
 class Config:
@@ -66,30 +68,40 @@ class Config:
     def term(self) -> str:
         return self.config["shell"]["term"]
 
-    def generate_config(self, instances: list) -> dict:
+    def generate_config(self, instances: list) -> None:
         """Generate a configuration based on current instances."""
-        config = DEFAULT_CONFIG.copy()
-        
-        # Add instances section
-        config["instances"] = {}
+        new_config = self.config.copy()
+        new_config["instances"] = {}
         
         for instance in instances:
             instance_config = {
                 "type": "vga" if instance.type == "virtual-machine" else "shell",
-                "port": None,  # Will be assigned dynamically
+                "port": self.get_next_port(),
                 "enabled": True
             }
-            config["instances"][instance.name] = instance_config
+            new_config["instances"][instance.name] = instance_config
         
-        return config
+        self.save_config(new_config)
 
     def save_config(self, config: dict):
         """Save configuration to disk."""
-        import tomli_w
-        
         # Ensure config directory exists
         os.makedirs(self.config_dir, exist_ok=True)
         
         # Write config file
         with open(self.config_file, "wb") as f:
             tomli_w.dump(config, f)
+        
+        # Update current config
+        self.config = config
+
+    def get_instance_config(self, instance_name: str) -> dict:
+        """Get configuration for a specific instance."""
+        return self.config.get("instances", {}).get(instance_name)
+
+    def list_enabled_instances(self) -> list:
+        """List all enabled instances from config."""
+        return [
+            name for name, cfg in self.config.get("instances", {}).items()
+            if cfg.get("enabled", True)
+        ]

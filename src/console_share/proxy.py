@@ -68,8 +68,9 @@ exit 0
 
     def proxy_shell(self, instance: IncusInstance, port: Optional[int] = None) -> int:
         """Proxy an incus shell connection."""
+        instance_config = self.config.get_instance_config(instance.name)
         if port is None:
-            port = self.config.get_next_port()
+            port = instance_config.get("port") if instance_config else self.config.get_next_port()
 
         # Start socat to proxy the shell
         cmd = [
@@ -87,8 +88,9 @@ exit 0
 
     def proxy_console(self, instance: IncusInstance, vga: bool = False, port: Optional[int] = None) -> int:
         """Proxy an incus console connection."""
+        instance_config = self.config.get_instance_config(instance.name)
         if port is None:
-            port = self.config.get_next_port()
+            port = instance_config.get("port") if instance_config else self.config.get_next_port()
 
         if vga and instance.type == "virtual-machine":
             return self._proxy_vga_console(instance, port)
@@ -160,12 +162,12 @@ exit 0
             except:
                 pass
 
-    def stop_proxy(self, instance_name: str, proxy_type: str = "all"):
-        """Stop proxy processes for an instance."""
+    def stop_proxy(self, instance_name: str):
+        """Stop all proxy processes for an instance."""
         keys_to_remove = []
         
         for key, process in self.active_proxies.items():
-            if (proxy_type == "all" or key.startswith(proxy_type)) and instance_name in key:
+            if instance_name in key:
                 try:
                     process.terminate()
                     process.wait(timeout=5)

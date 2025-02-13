@@ -2,7 +2,7 @@ import click
 import sys
 from typing import Optional
 from .config import Config
-from .incus import get_instance, is_running, IncusError
+from .incus import get_instance, is_running, list_instances, IncusError
 from .proxy import Proxy, ProxyError
 
 @click.group()
@@ -15,10 +15,8 @@ def cli(ctx, generate):
         
         if generate:
             try:
-                from .incus import list_instances
                 instances = list_instances()
-                new_config = config.generate_config(instances)
-                config.save_config(new_config)
+                config.generate_config(instances)
                 click.echo(f"Generated config file at: {config.config_file}")
                 click.echo(f"Found {len(instances)} instances:")
                 for instance in instances:
@@ -39,75 +37,56 @@ def cli(ctx, generate):
         sys.exit(1)
 
 @cli.command()
-@click.argument('instance')
-@click.option('--port', type=int, help='Port to listen on (default: from config)')
 @click.pass_context
-def shell(ctx, instance: str, port: Optional[int]):
-    """Proxy an Incus shell connection."""
-    try:
-        inst = get_instance(instance)
-        if not inst:
-            click.echo(f"Instance {instance} not found", err=True)
-            sys.exit(1)
-        
-        if not is_running(inst):
-            click.echo(f"Instance {instance} is not running", err=True)
-            sys.exit(1)
-        
-        proxy: Proxy = ctx.obj['proxy']
-        port = proxy.proxy_shell(inst, port)
-        click.echo(f"Shell proxy started for {instance}")
-        click.echo(f"Connect using: nc {ctx.obj['config'].bind_address} {port}")
-        
-        # Keep running until interrupted
-        try:
-            proxy.active_proxies[f"shell_{instance}"].wait()
-        except KeyboardInterrupt:
-            click.echo("\nStopping shell proxy...")
-            proxy.stop_proxy(instance, "shell")
-            
-    except (IncusError, ProxyError) as e:
-        click.echo(f"Error: {e}", err=True)
+def start(ctx):
+    """Start proxies for all enabled instances in config."""
+    config: Config = ctx.obj['config']
+    proxy: Proxy = ctx.obj['proxy']
+    
+    enabled_instances = config.list_enabled_instances()
+    if not enabled_instances:
+        click.echo("No enabled instances found in config")
         sys.exit(1)
-
-@cli.command()
-@click.argument('instance')
-@click.option('--vga', is_flag=True, help='Use VGA console for virtual machines')
-@click.option('--port', type=int, help='Port to listen on (default: from config)')
-@click.pass_context
-def console(ctx, instance: str, vga: bool, port: Optional[int]):
-    """Proxy an Incus console connection."""
-    try:
-        inst = get_instance(instance)
-        if not inst:
-            click.echo(f"Instance {instance} not found", err=True)
-            sys.exit(1)
-        
-        if not is_running(inst):
-            click.echo(f"Instance {instance} is not running", err=True)
-            sys.exit(1)
-        
-        proxy: Proxy = ctx.obj['proxy']
-        port = proxy.proxy_console(inst, vga, port)
-        
-        click.echo(f"Console proxy started for {instance}")
-        if vga:
-            click.echo(f"Connect using: nc {ctx.obj['config'].bind_address} {port}")
-            click.echo("Note: VGA console requires a SPICE client")
-        else:
-            click.echo(f"Connect using: nc {ctx.obj['config'].bind_address} {port}")
-        
-        # Keep running until interrupted
+    
+    for instance_name in enabled_instances:
         try:
-            proxy_key = f"vga_{instance}" if vga else f"console_{instance}"
-            proxy.active_proxies[proxy_key].wait()
-        except KeyboardInterrupt:
-            click.echo("\nStopping console proxy...")
-            proxy.stop_proxy(instance, "vga" if vga else "console")
+            instance = get_instance(instance_name)
+            if not instance:
+                click.echo(f"Instance {instance_name} not found, skipping")
+                continue
             
-    except (IncusError, ProxyError) as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+            if not is_running(instance):
+                click.echo(f"Instance {instance_name} is not running, skipping")
+                continue
+            
+            instance_config = config.get_instance_config(instance_name)
+            if not instance_config:
+                click.echo(f"No config found for {instance_name}, skipping")
+                continue
+            
+            if instance_config["type"] == "vga":
+                port = proxy.proxy_console(instance, vga=True, port=instance_config.get("port"))
+                click.echo(f"VGA console proxy started for {instance_name}")
+                click.echo(f"Connect using: nc {config.bind_address} {port}")
+                click.echo("Note: VGA console requires a SPICE client")
+            elif instance_config["type"] == "shell":
+                port = proxy.proxy_shell(instance, port=instance_config.get("port"))
+                click.echo(f"Shell proxy started for {instance_name}")
+                click.echo(f"Connect using: nc {config.bind_address} {port}")
+            
+        except (IncusError, ProxyError) as e:
+            click.echo(f"Error starting proxy for {instance_name}: {e}")
+    
+    click.echo("\nAll proxies started. Press Ctrl+C to stop.")
+    try:
+        # Wait for any proxy to exit
+        while any(p.poll() is None for p in proxy.active_proxies.values()):
+            import time
+            time.sleep(1)
+    except KeyboardInterrupt:
+        click.echo("\nStopping all proxies...")
+        for instance_name in enabled_instances:
+            proxy.stop_proxy(instance_name)
 
 @cli.command()
 @click.pass_context
@@ -123,21 +102,6 @@ def list(ctx):
     click.echo("Active proxy connections:")
     for key, info in active.items():
         click.echo(f"  {info['type']}: {info['instance']} (PID: {info['pid']})")
-
-@cli.command()
-@click.argument('instance')
-@click.option('--type', 'proxy_type', type=click.Choice(['shell', 'console', 'vga', 'all']),
-              default='all', help='Type of proxy to stop')
-@click.pass_context
-def stop(ctx, instance: str, proxy_type: str):
-    """Stop proxy connections for an instance."""
-    try:
-        proxy: Proxy = ctx.obj['proxy']
-        proxy.stop_proxy(instance, proxy_type)
-        click.echo(f"Stopped {proxy_type} proxy for {instance}")
-    except Exception as e:
-        click.echo(f"Error stopping proxy: {e}", err=True)
-        sys.exit(1)
 
 def main():
     """Entry point for the CLI."""
