@@ -196,14 +196,11 @@ class IncusConsoleProxy:
         # Add container-specific options for better PTY handling
         if self.is_container:
             cmd.extend([
-                "--text",  # text mode for console
-                "--async-stdio",  # better terminal handling
-                "--exit-on-eof",  # proper disconnect handling
+                "--binary",  # text mode for console
             ])
         else:
             cmd.extend([
                 "--binary",  # binary mode for VMs
-                "--exit-on-eof",  # Exit on endpoint disconnect
             ])
         
         # Add client certificate and key if they exist
