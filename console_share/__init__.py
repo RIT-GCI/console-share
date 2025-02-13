@@ -581,6 +581,12 @@ def main():
         asyncio.run(manager.start_all())
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
+        # Kill all websocat processes
+        try:
+            subprocess.run(['pkill', '-f', 'websocat_max'], check=False)
+            logger.info("Terminated all websocat processes")
+        except Exception as e:
+            logger.error(f"Error killing websocat processes: {e}")
     except FileNotFoundError as e:
         logger.error(f"Error: {e}")
         logger.info("Use --create-config to create a default configuration file or use --generate to try and auto-create one for you.")
