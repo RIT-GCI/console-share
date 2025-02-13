@@ -9,7 +9,6 @@ A Python utility to proxy Incus container and VM consoles to TCP ports using web
 - Multiple console proxies can run simultaneously
 - Automatic retry on connection failures
 - SSL certificate support for secure connections
-- Auto-generation of configuration from current Incus setup
 
 ## Prerequisites
 
@@ -28,7 +27,7 @@ pipx install console-share
 ### Using pip
 
 ```bash
-pip install https://pypi.org/project/console-share
+pip install console-share
 ```
 
 ## Configuration
@@ -43,12 +42,10 @@ project = default
 [proxy1]
 instance = my-container
 port = 8001
-console_type = shell
 
 [proxy2]
 instance = my-vm
 port = 8002
-console_type = vga
 ```
 
 ### Configuration Options
@@ -62,25 +59,13 @@ console_type = vga
 - `port`: TCP port to listen on
 - `remote`: (optional) Override global remote
 - `project`: (optional) Override global project
-- `console_type`: (optional) Type of console to use
-  - For containers: `shell` (default) or `console`
-    - `shell`: Uses incus exec to provide a shell (recommended)
-    - `console`: Uses incus console for direct console access
-  - For VMs: `vga` (default) or `shell`
-    - `vga`: Uses SPICE/VGA console (recommended for VMs)
-    - `shell`: Uses incus exec to provide a shell
 
 ## Usage
 
-1. Create a configuration file:
-   - Create default config:
-   ```bash
-   console-share --create-config
-   ```
-   - Or auto-generate from current Incus setup:
-   ```bash
-   console-share --generate
-   ```
+1. Create default config:
+```bash
+console-share --create-config
+```
 
 2. Edit the config file with your instance settings
 

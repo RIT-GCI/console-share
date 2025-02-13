@@ -33,7 +33,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
 
 class IncusConsoleProxy:
-    def __init__(self, remote, project, instance, port, console_type=None):
+    def __init__(self, remote, project, instance, port):
         self.remote = remote or "unix:/var/lib/incus/unix.socket"
         self.project = project or "default"
         self.instance = instance
@@ -42,7 +42,6 @@ class IncusConsoleProxy:
         self.key_path = str(Path.home() / ".config/incus/client.key")
         self.is_container = None
         self.retry_count = 0
-        self.console_type = console_type or "shell"  # Default to shell for containers
 
     def get_scheme_and_host(self):
         """Get scheme and host based on remote type"""
@@ -123,16 +122,10 @@ class IncusConsoleProxy:
             
             if instance_type == "virtual-machine":
                 self.is_container = False
-                # Default to vga for VMs unless explicitly set to shell
-                if self.console_type not in ["shell", "vga"]:
-                    self.console_type = "vga"
-                logger.info(f"[{self.instance}] VM detected - using {self.console_type} console")
+                logger.info(f"[{self.instance}] VM detected - using SPICE/VGA console")
             else:
                 self.is_container = True
-                # Default to shell for containers unless explicitly set to console
-                if self.console_type not in ["shell", "console"]:
-                    self.console_type = "shell"
-                logger.info(f"[{self.instance}] Container detected - using {self.console_type} console")
+                logger.info(f"[{self.instance}] Container detected - using text console")
         except Exception as e:
             logger.error(f"[{self.instance}] Error determining instance type: {e}")
             logger.info(f"[{self.instance}] Defaulting to container console")
@@ -145,55 +138,24 @@ class IncusConsoleProxy:
             
         # Different console type for VMs vs containers
         if self.is_container:
-            if self.console_type == "shell":
-                data = {
-                    "command": ["su", "-l"],
-                    "wait-for-websocket": True,
-                    "interactive": True,
-                    "environment": {
-                        "TERM": "xterm-256color"
-                    },
-                    "width": 80,
-                    "height": 25,
-                    "record-output": False
-                }
-                endpoint = f"/instances/{self.instance}/exec?project={self.project}"
-            else:
-                data = {
-                    "width": 80,
-                    "height": 25,
-                    "type": "console",
-                    "force": True
-                }
-                endpoint = f"/instances/{self.instance}/console?project={self.project}"
+            data = {
+                "width": 80,
+                "height": 25,
+                "type": "console",
+                "force": True
+            }
         else:
-            # For VMs, handle both vga and shell types
-            if self.console_type == "shell":
-                data = {
-                    "command": ["su", "-l"],
-                    "wait-for-websocket": True,
-                    "interactive": True,
-                    "environment": {
-                        "TERM": "xterm-256color"
-                    },
-                    "width": 80,
-                    "height": 25,
-                    "record-output": False
-                }
-                endpoint = f"/instances/{self.instance}/exec?project={self.project}"
-            else:
-                data = {
-                    "width": 1024,
-                    "height": 768,
-                    "type": "vga",
-                    "force": True
-                }
-                endpoint = f"/instances/{self.instance}/console?project={self.project}"
+            data = {
+                "width": 1024,
+                "height": 768,
+                "type": "vga",
+                "force": True
+            }
             
         try:
             response = await self.api_request(
                 "POST",
-                endpoint,
+                f"/instances/{self.instance}/console?project={self.project}",
                 data=data
             )
             
@@ -342,7 +304,6 @@ class ProxyManager:
         global_settings = self.config['global'] if 'global' in self.config else {}
         default_remote = global_settings.get('remote', "unix:/var/lib/incus/unix.socket")
         default_project = global_settings.get('project', "default")
-        default_console_type = global_settings.get('console_type', None)  # Let IncusConsoleProxy handle defaults
         
         # Create proxy instances for each mapping
         for section in self.config.sections():
@@ -351,10 +312,9 @@ class ProxyManager:
                 port = self.config[section].getint('port')
                 remote = self.config[section].get('remote', default_remote)
                 project = self.config[section].get('project', default_project)
-                console_type = self.config[section].get('console_type', default_console_type)
                 
                 if instance and port:
-                    proxy = IncusConsoleProxy(remote, project, instance, port, console_type)
+                    proxy = IncusConsoleProxy(remote, project, instance, port)
                     self.proxies.append(proxy)
 
     def get_local_ip(self):
@@ -376,24 +336,15 @@ class ProxyManager:
         # Prepare table data
         table_data = []
         for proxy in self.proxies:
-            # Determine connection command based on instance type and console type
             if proxy.is_container:
-                instance_type = "Container"
-                if proxy.console_type == "shell":
-                    command = f"telnet {local_ip} {proxy.listen_port}"
-                else:  # console type
-                    command = f"telnet {local_ip} {proxy.listen_port}"
-            else:  # VM
-                instance_type = "VM"
-                if proxy.console_type == "shell":
-                    command = f"telnet {local_ip} {proxy.listen_port}"
-                else:  # vga type
-                    command = f"remote-viewer spice://{local_ip}:{proxy.listen_port}"
+                command = f"telnet {local_ip} {proxy.listen_port}"
+            else:
+                command = f"remote-viewer spice://{local_ip}:{proxy.listen_port}"
             
             table_data.append([
                 proxy.instance,
                 f"{local_ip}:{proxy.listen_port}",
-                f"{instance_type} ({proxy.console_type})",
+                "Container" if proxy.is_container else "VM",
                 command
             ])
         
@@ -465,17 +416,15 @@ def get_default_project():
         return "default"  # fallback
 
 def get_instances():
-    """Get list of all instances with their types"""
+    """Get list of all instances"""
     try:
         result = subprocess.run(['incus', 'list', '-f', 'csv'], 
                               capture_output=True, text=True, check=True)
         instances = []
         for line in result.stdout.splitlines():
             if line and not line.startswith('NAME,'):  # Skip header
-                parts = line.split(',')
-                instance_name = parts[0]
-                instance_type = parts[1]  # TYPE column from incus list
-                instances.append((instance_name, instance_type))
+                instance_name = line.split(',')[0]
+                instances.append(instance_name)
         return instances
     except subprocess.CalledProcessError:
         return []
@@ -505,21 +454,11 @@ def generate_config():
 
     # Start port assignments from 8001
     base_port = 8001
-    for i, (instance, instance_type) in enumerate(instances):
+    for i, instance in enumerate(instances):
         section = f"proxy{i+1}"
-        # Set console_type based on instance type
-        console_type = 'vga' if instance_type == 'VIRTUAL-MACHINE' else 'shell'
         config[section] = {
             'instance': instance,
-            'port': str(base_port + i),
-            '# Console type settings': '',
-            '# For containers: shell (default) or console': '',
-            '# shell: Uses incus exec to provide a shell (recommended)': '',
-            '# console: Uses incus console for direct console access': '',
-            '# For VMs: vga (default) or shell': '',
-            '# vga: Uses SPICE/VGA console (recommended for VMs)': '',
-            '# shell: Uses incus exec to provide a shell': '',
-            'console_type': console_type
+            'port': str(base_port + i)
         }
 
     with open(DEFAULT_CONFIG_PATH, 'w') as f:
@@ -540,15 +479,7 @@ def create_default_config():
         }
         config['proxy1'] = {
             'instance': 'instance-name',
-            'port': '8001',
-            '# Console type settings': '',
-            '# For containers: shell (default) or console': '',
-            '# shell: Uses incus exec to provide a shell (recommended)': '',
-            '# console: Uses incus console for direct console access': '',
-            '# For VMs: vga (default) or shell': '',
-            '# vga: Uses SPICE/VGA console (recommended for VMs)': '',
-            '# shell: Uses incus exec to provide a shell': '',
-            'console_type': 'shell'  # Will be overridden to vga for VMs by default
+            'port': '8001'
         }
         
         with open(DEFAULT_CONFIG_PATH, 'w') as f:
@@ -581,12 +512,6 @@ def main():
         asyncio.run(manager.start_all())
     except KeyboardInterrupt:
         logger.info("\nShutting down...")
-        # Kill all websocat processes
-        try:
-            subprocess.run(['pkill', '-f', 'websocat_max'], check=False)
-            logger.info("Terminated all websocat processes")
-        except Exception as e:
-            logger.error(f"Error killing websocat processes: {e}")
     except FileNotFoundError as e:
         logger.error(f"Error: {e}")
         logger.info("Use --create-config to create a default configuration file or use --generate to try and auto-create one for you.")
