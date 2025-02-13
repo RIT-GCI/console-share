@@ -43,7 +43,7 @@ def parse_csv_output(output: str) -> List[List[str]]:
         
         # Find the status (RUNNING, STOPPED, etc.)
         status_start = next(i for i, c in enumerate(line) if c.isupper())
-        name = line[:status_start]
+        name = line[:status_start].strip().rstrip(',')
         print(f"Found name: {name}")  # Debug output
         
         rest = line[status_start:]
