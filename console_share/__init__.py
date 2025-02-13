@@ -376,15 +376,24 @@ class ProxyManager:
         # Prepare table data
         table_data = []
         for proxy in self.proxies:
+            # Determine connection command based on instance type and console type
             if proxy.is_container:
-                command = f"telnet {local_ip} {proxy.listen_port}"
-            else:
-                command = f"remote-viewer spice://{local_ip}:{proxy.listen_port}"
+                instance_type = "Container"
+                if proxy.console_type == "shell":
+                    command = f"telnet {local_ip} {proxy.listen_port}"
+                else:  # console type
+                    command = f"telnet {local_ip} {proxy.listen_port}"
+            else:  # VM
+                instance_type = "VM"
+                if proxy.console_type == "shell":
+                    command = f"telnet {local_ip} {proxy.listen_port}"
+                else:  # vga type
+                    command = f"remote-viewer spice://{local_ip}:{proxy.listen_port}"
             
             table_data.append([
                 proxy.instance,
                 f"{local_ip}:{proxy.listen_port}",
-                "Container" if proxy.is_container else "VM",
+                f"{instance_type} ({proxy.console_type})",
                 command
             ])
         
