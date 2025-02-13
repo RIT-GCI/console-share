@@ -36,8 +36,31 @@ def parse_csv_output(output: str) -> List[List[str]]:
     if not output:
         return []
     
-    reader = csv.reader(StringIO(output))
-    return list(reader)
+    # Split each line into fields based on status and type markers
+    result = []
+    for line in output.splitlines():
+        # Find the status (RUNNING, STOPPED, etc.)
+        status_start = next(i for i, c in enumerate(line) if c.isupper())
+        name = line[:status_start]
+        
+        rest = line[status_start:]
+        # Find type (CONTAINER or VIRTUAL-MACHINE)
+        type_start = rest.find("CONTAINER")
+        if type_start == -1:
+            type_start = rest.find("VIRTUAL-MACHINE")
+        
+        if type_start != -1:
+            status = rest[:type_start]
+            # Extract IP from the middle section
+            ip = rest[len(status):type_start].strip()
+            # Get type and snapshots
+            type_and_snapshots = rest[type_start:]
+            instance_type = "CONTAINER" if "CONTAINER" in type_and_snapshots else "VIRTUAL-MACHINE"
+            snapshots = type_and_snapshots.split(instance_type)[1]
+            
+            result.append([name, status, ip, instance_type, snapshots])
+    
+    return result
 
 def get_current_project_and_remote() -> Tuple[str, str]:
     """Get the current project and remote from incus output."""
