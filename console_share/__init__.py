@@ -356,13 +356,19 @@ class ProxyManager:
 
     async def start_all(self):
         """Start all proxy instances"""
+        # Create and start all proxy tasks
         tasks = []
         for proxy in self.proxies:
             tasks.append(asyncio.create_task(proxy.start_proxy()))
-        await asyncio.gather(*tasks)
         
-        # Print instance table after all proxies are started
+        # Wait 10 seconds for proxies to initialize
+        await asyncio.sleep(10)
+        
+        # Print instance table
         self.print_instance_table()
+        
+        # Continue running the tasks
+        await asyncio.gather(*tasks)
 
 def get_current_remote():
     """Get the current remote from incus remote ls"""
