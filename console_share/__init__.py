@@ -362,7 +362,7 @@ class ProxyManager:
             tasks.append(asyncio.create_task(proxy.start_proxy()))
         
         # Wait 10 seconds for proxies to initialize
-        await asyncio.sleep(10)
+        await asyncio.sleep(2)
         
         # Print instance table
         self.print_instance_table()
