@@ -506,7 +506,7 @@ def signal_handler(manager):
     return _handler
 
 def main():
-    parser = argparse.ArgumentParser(description='Proxy Incus console to TCP using websocat4')
+    parser = argparse.ArgumentParser(description='🚀 Proxy Incus console to TCP using websocat4 - Because who doesn\'t love a good console proxy? Generated with ❤️ by fffics @ RIT (https://github.com/RIT-GCI/console-share)')
     parser.add_argument('--config', default=DEFAULT_CONFIG_PATH, help=f'Config file path (default: {DEFAULT_CONFIG_PATH})')
     parser.add_argument('--create-config', action='store_true', help='Create default config file')
     parser.add_argument('--generate', action='store_true', help='Generate config file from current incus setup')
