@@ -20,7 +20,7 @@ def cli(ctx, generate):
                 click.echo(f"Generated config file at: {config.config_file}")
                 click.echo(f"Found {len(instances)} instances:")
                 for instance in instances:
-                    conn_type = "VGA console" if instance.type == "virtual-machine" else "Shell"
+                    conn_type = "VGA console" if instance.type == "VIRTUAL-MACHINE" else "Shell"
                     click.echo(f"  - {instance.name} ({conn_type})")
                 sys.exit(0)
             except Exception as e:
