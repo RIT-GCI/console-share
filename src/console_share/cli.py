@@ -5,7 +5,7 @@ from .config import Config
 from .incus import get_instance, is_running, list_instances, IncusError
 from .proxy import Proxy, ProxyError
 
-@click.group()
+@click.command(cls=click.Group, invoke_without_command=True)
 @click.option('--generate', is_flag=True, help='Generate config file based on current instances')
 @click.pass_context
 def cli(ctx, generate):
@@ -32,6 +32,11 @@ def cli(ctx, generate):
             'config': config,
             'proxy': Proxy(config)
         }
+
+        # If no command is given, start proxies by default
+        if ctx.invoked_subcommand is None and not generate:
+            ctx.invoke(start)
+            
     except Exception as e:
         click.echo(f"Error initializing: {e}", err=True)
         sys.exit(1)
