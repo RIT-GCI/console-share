@@ -292,6 +292,86 @@ class ProxyManager:
             tasks.append(asyncio.create_task(proxy.start_proxy()))
         await asyncio.gather(*tasks)
 
+def get_current_remote():
+    """Get the current remote from incus remote ls"""
+    try:
+        result = subprocess.run(['incus', 'remote', 'ls', '-f', 'csv'], 
+                              capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            if '(current)' in line:
+                remote = line.split(',')[0].replace(' (current)', '')
+                url = line.split(',')[1]
+                return url if url.startswith('http') else f"unix:/var/lib/incus/unix.socket"
+        return "unix:/var/lib/incus/unix.socket"  # fallback
+    except subprocess.CalledProcessError:
+        return "unix:/var/lib/incus/unix.socket"  # fallback
+
+def get_default_project():
+    """Get the current project from incus project list"""
+    try:
+        result = subprocess.run(['incus', 'project', 'list', '-f', 'csv'], 
+                              capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            if '(current)' in line:
+                return line.split(',')[0].replace(' (current)', '')
+        return "default"  # fallback
+    except subprocess.CalledProcessError:
+        return "default"  # fallback
+
+def get_instances():
+    """Get list of all instances"""
+    try:
+        result = subprocess.run(['incus', 'list', '-f', 'csv'], 
+                              capture_output=True, text=True, check=True)
+        instances = []
+        for line in result.stdout.splitlines():
+            if line and not line.startswith('NAME,'):  # Skip header
+                instance_name = line.split(',')[0]
+                instances.append(instance_name)
+        return instances
+    except subprocess.CalledProcessError:
+        return []
+
+def generate_config():
+    """Generate configuration file based on current incus setup"""
+    if os.path.exists(DEFAULT_CONFIG_PATH):
+        logger.warning(f"Config file already exists: {DEFAULT_CONFIG_PATH}")
+        response = input("Do you want to overwrite it? (y/N): ")
+        if response.lower() != 'y':
+            logger.info("Aborted.")
+            return
+
+    remote = get_current_remote()
+    project = get_default_project()
+    instances = get_instances()
+
+    if not instances:
+        logger.error("No instances found.")
+        return
+
+    config = configparser.ConfigParser()
+    config['global'] = {
+        'remote': remote,
+        'project': project
+    }
+
+    # Start port assignments from 8001
+    base_port = 8001
+    for i, instance in enumerate(instances):
+        section = f"proxy{i+1}"
+        config[section] = {
+            'instance': instance,
+            'port': str(base_port + i)
+        }
+
+    with open(DEFAULT_CONFIG_PATH, 'w') as f:
+        config.write(f)
+    
+    logger.info(f"Generated config file: {DEFAULT_CONFIG_PATH}")
+    logger.info(f"Remote: {remote}")
+    logger.info(f"Project: {project}")
+    logger.info(f"Configured {len(instances)} instances starting from port {base_port}")
+
 def create_default_config():
     """Create a default configuration file if it doesn't exist"""
     if not os.path.exists(DEFAULT_CONFIG_PATH):
@@ -315,13 +395,17 @@ def main():
     parser = argparse.ArgumentParser(description='Proxy Incus console to TCP using websocat4')
     parser.add_argument('--config', default=DEFAULT_CONFIG_PATH, help=f'Config file path (default: {DEFAULT_CONFIG_PATH})')
     parser.add_argument('--create-config', action='store_true', help='Create default config file')
+    parser.add_argument('--generate', action='store_true', help='Generate config file from current incus setup')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     args = parser.parse_args()
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
-    if args.create_config:
+    if args.generate:
+        generate_config()
+        sys.exit(0)
+    elif args.create_config:
         create_default_config()
 
     try:
