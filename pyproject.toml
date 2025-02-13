@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "console-share"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
-    { name = "JetBalsa", email = "sage@jetbalsa.com" }
+    { name = "JetBalsa", email = "spam@balsa.info" }
 ]
 description = "Network proxy tool for Incus console and shell connections"
 readme = "README.md"

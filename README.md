@@ -14,10 +14,10 @@ A network proxy tool for Incus console and shell connections.
 
 ```bash
 # Install directly from GitHub
-pip install git+https://github.com/jetbalsa/console-share.git
+pip install git+https://github.com/RIT-GCI/console-share.git
 
 # Or with pipx for isolated installation
-pipx install git+https://github.com/jetbalsa/console-share.git
+pipx install git+https://github.com/RIT-GCI/console-share.git
 ```
 
 ## Configuration
