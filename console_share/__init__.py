@@ -191,6 +191,7 @@ class IncusConsoleProxy:
         cmd = [
             WEBSOCAT_PATH,
             "--insecure",  # insecure SSL for self-signed certs
+            "--async-stdio",  # prevent text doubling in telnet
         ]
 
         # Add container-specific options for better PTY handling
