@@ -55,11 +55,17 @@ def parse_csv_output(output: str) -> List[List[str]]:
             type_start = rest.find("VIRTUAL-MACHINE")
         
         if type_start != -1:
-            status = rest[:type_start]
-            print(f"Found status: {status}")  # Debug output
+            # Extract status (everything up to the first parenthesis or type marker)
+            ip_start = rest.find("(")
+            if ip_start == -1:
+                status = rest[:type_start].strip()
+                ip = ""
+            else:
+                status = rest[:ip_start].strip()
+                ip_end = rest.find(")")
+                ip = rest[ip_start:ip_end+1] if ip_end != -1 else ""
             
-            # Extract IP from the middle section
-            ip = rest[len(status):type_start].strip()
+            print(f"Found status: {status}")  # Debug output
             print(f"Found IP: {ip}")  # Debug output
             
             # Get type and snapshots
