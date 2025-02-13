@@ -119,6 +119,27 @@ remote-viewer spice://localhost:<port>
 - Network interfaces are automatically detected for proper IP address display
 - Connection information is displayed in a neat table format
 
+## FAQ
+
+### Q: Help! I'm getting "Error: Failed running forkconsole: attaching to the container failed" over telnet!
+
+A: Ah, the classic "container is giving you the cold shoulder" error! 🥶 Time for the tried-and-true "turn it off and on again" dance:
+
+1. First, do the instance cha-cha:
+   ```bash
+   incus stop your-instance-name
+   incus start your-instance-name
+   ```
+
+2. Then, the proxy polka:
+   ```bash
+   # Stop your console-share process
+   # Start it again with:
+   console-share
+   ```
+
+Remember: Sometimes our digital friends just need a quick nap to feel better! 😴
+
 ## License
 
 MIT License
