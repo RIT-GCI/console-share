@@ -33,7 +33,7 @@ MAX_RETRIES = 3
 RETRY_DELAY = 5  # seconds
 
 class IncusConsoleProxy:
-    def __init__(self, remote, project, instance, port):
+    def __init__(self, remote, project, instance, port, console_type=None):
         self.remote = remote or "unix:/var/lib/incus/unix.socket"
         self.project = project or "default"
         self.instance = instance
@@ -42,6 +42,7 @@ class IncusConsoleProxy:
         self.key_path = str(Path.home() / ".config/incus/client.key")
         self.is_container = None
         self.retry_count = 0
+        self.console_type = console_type or "shell"  # Default to shell for containers
 
     def get_scheme_and_host(self):
         """Get scheme and host based on remote type"""
@@ -122,10 +123,16 @@ class IncusConsoleProxy:
             
             if instance_type == "virtual-machine":
                 self.is_container = False
-                logger.info(f"[{self.instance}] VM detected - using SPICE/VGA console")
+                # Default to vga for VMs unless explicitly set to shell
+                if self.console_type not in ["shell", "vga"]:
+                    self.console_type = "vga"
+                logger.info(f"[{self.instance}] VM detected - using {self.console_type} console")
             else:
                 self.is_container = True
-                logger.info(f"[{self.instance}] Container detected - using text console")
+                # Default to shell for containers unless explicitly set to console
+                if self.console_type not in ["shell", "console"]:
+                    self.console_type = "shell"
+                logger.info(f"[{self.instance}] Container detected - using {self.console_type} console")
         except Exception as e:
             logger.error(f"[{self.instance}] Error determining instance type: {e}")
             logger.info(f"[{self.instance}] Defaulting to container console")
@@ -138,24 +145,55 @@ class IncusConsoleProxy:
             
         # Different console type for VMs vs containers
         if self.is_container:
-            data = {
-                "width": 80,
-                "height": 25,
-                "type": "console",
-                "force": True
-            }
+            if self.console_type == "shell":
+                data = {
+                    "command": ["su", "-l"],
+                    "wait-for-websocket": True,
+                    "interactive": True,
+                    "environment": {
+                        "TERM": "xterm-256color"
+                    },
+                    "width": 80,
+                    "height": 25,
+                    "record-output": False
+                }
+                endpoint = f"/instances/{self.instance}/exec?project={self.project}"
+            else:
+                data = {
+                    "width": 80,
+                    "height": 25,
+                    "type": "console",
+                    "force": True
+                }
+                endpoint = f"/instances/{self.instance}/console?project={self.project}"
         else:
-            data = {
-                "width": 1024,
-                "height": 768,
-                "type": "vga",
-                "force": True
-            }
+            # For VMs, handle both vga and shell types
+            if self.console_type == "shell":
+                data = {
+                    "command": ["su", "-l"],
+                    "wait-for-websocket": True,
+                    "interactive": True,
+                    "environment": {
+                        "TERM": "xterm-256color"
+                    },
+                    "width": 80,
+                    "height": 25,
+                    "record-output": False
+                }
+                endpoint = f"/instances/{self.instance}/exec?project={self.project}"
+            else:
+                data = {
+                    "width": 1024,
+                    "height": 768,
+                    "type": "vga",
+                    "force": True
+                }
+                endpoint = f"/instances/{self.instance}/console?project={self.project}"
             
         try:
             response = await self.api_request(
                 "POST",
-                f"/instances/{self.instance}/console?project={self.project}",
+                endpoint,
                 data=data
             )
             
@@ -304,6 +342,7 @@ class ProxyManager:
         global_settings = self.config['global'] if 'global' in self.config else {}
         default_remote = global_settings.get('remote', "unix:/var/lib/incus/unix.socket")
         default_project = global_settings.get('project', "default")
+        default_console_type = global_settings.get('console_type', None)  # Let IncusConsoleProxy handle defaults
         
         # Create proxy instances for each mapping
         for section in self.config.sections():
@@ -312,9 +351,10 @@ class ProxyManager:
                 port = self.config[section].getint('port')
                 remote = self.config[section].get('remote', default_remote)
                 project = self.config[section].get('project', default_project)
+                console_type = self.config[section].get('console_type', default_console_type)
                 
                 if instance and port:
-                    proxy = IncusConsoleProxy(remote, project, instance, port)
+                    proxy = IncusConsoleProxy(remote, project, instance, port, console_type)
                     self.proxies.append(proxy)
 
     def get_local_ip(self):
@@ -458,7 +498,15 @@ def generate_config():
         section = f"proxy{i+1}"
         config[section] = {
             'instance': instance,
-            'port': str(base_port + i)
+            'port': str(base_port + i),
+            '# Console type settings': '',
+            '# For containers: shell (default) or console': '',
+            '# shell: Uses incus exec to provide a shell (recommended)': '',
+            '# console: Uses incus console for direct console access': '',
+            '# For VMs: vga (default) or shell': '',
+            '# vga: Uses SPICE/VGA console (recommended for VMs)': '',
+            '# shell: Uses incus exec to provide a shell': '',
+            'console_type': 'shell'  # Will be overridden to vga for VMs by default
         }
 
     with open(DEFAULT_CONFIG_PATH, 'w') as f:
@@ -479,7 +527,15 @@ def create_default_config():
         }
         config['proxy1'] = {
             'instance': 'instance-name',
-            'port': '8001'
+            'port': '8001',
+            '# Console type settings': '',
+            '# For containers: shell (default) or console': '',
+            '# shell: Uses incus exec to provide a shell (recommended)': '',
+            '# console: Uses incus console for direct console access': '',
+            '# For VMs: vga (default) or shell': '',
+            '# vga: Uses SPICE/VGA console (recommended for VMs)': '',
+            '# shell: Uses incus exec to provide a shell': '',
+            'console_type': 'shell'  # Will be overridden to vga for VMs by default
         }
         
         with open(DEFAULT_CONFIG_PATH, 'w') as f:
