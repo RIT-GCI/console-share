@@ -79,7 +79,7 @@ def get_instance(name: str) -> Optional[IncusInstance]:
         return IncusInstance(
             name=instance[0],
             status=instance[1],
-            type=instance[2],
+            type=instance[3],  # Type is at index 3 in CSV output (name,status,ip,type,snapshots)
             project=project,
             remote=remote
         )
@@ -108,7 +108,7 @@ def list_instances() -> List[IncusInstance]:
             IncusInstance(
                 name=instance[0],
                 status=instance[1],
-                type=instance[2],
+                type=instance[3],  # Type is at index 3 in CSV output (name,status,ip,type,snapshots)
                 project=project,
                 remote=remote
             )
