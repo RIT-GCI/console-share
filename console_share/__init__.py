@@ -47,9 +47,16 @@ class IncusConsoleProxy:
             socket_path = self.remote[5:]
             return "https+unix", f"{socket_path}:/"
         else:
-            if ':' not in self.remote:
-                return "https", f"{self.remote}:8443"
-            return "https", self.remote
+            # Handle URLs that already have a scheme
+            if self.remote.startswith(("http://", "https://")):
+                # Remove scheme and get host part
+                host = self.remote.split("://")[1]
+                return "https", host
+            else:
+                # No scheme provided, add default port if needed
+                if ':' not in self.remote:
+                    return "https", f"{self.remote}:8443"
+                return "https", self.remote
 
     async def api_request(self, method, path, data=None):
         """Make an HTTP request to the Incus API"""
@@ -60,16 +67,41 @@ class IncusConsoleProxy:
             ssl_context.load_cert_chain(self.cert_path, self.key_path)
 
         scheme, host = self.get_scheme_and_host()
-        url = f"{scheme}://{host}/1.0{path}"
+        # For unix socket connections
+        if scheme == "https+unix":
+            url = f"{scheme}://{host}/1.0{path}"
+        else:
+            # For HTTPS connections, ensure we don't duplicate the scheme
+            url = f"https://{host}/1.0{path}"
         logger.debug(f"API {method} request to: {url}")
         
-        async with aiohttp.ClientSession() as session:
-            async with session.request(method, url, json=data, ssl=ssl_context) as response:
-                response_data = await response.json()
-                if response.status in [200, 202]:
-                    return response_data
+        # Configure TCP connector with custom DNS cache parameters
+        connector = aiohttp.TCPConnector(
+            ssl=ssl_context,
+            ttl_dns_cache=300,  # Cache DNS results for 5 minutes
+            use_dns_cache=True,  # Enable DNS caching
+            force_close=True     # Ensure connections are closed properly
+        )
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
+            try:
+                async with session.request(method, url, json=data) as response:
+                    response_data = await response.json()
+                    if response.status in [200, 202]:
+                        return response_data
+                    else:
+                        raise Exception(f"HTTP {response.status}: {await response.text()}")
+            except aiohttp.ClientConnectorError as e:
+                if "Name or service not known" in str(e) or "Temporary failure in name resolution" in str(e):
+                    logger.error(f"DNS resolution error for {url}: {e}")
+                    logger.info("Please check your network connection and DNS settings")
+                    raise Exception(f"DNS resolution failed for {url}. Check network/DNS settings.")
                 else:
-                    raise Exception(f"HTTP {response.status}: {await response.text()}")
+                    logger.error(f"Connection error for {url}: {e}")
+                    raise Exception(f"Failed to connect to {url}: {e}")
+            except aiohttp.ClientError as e:
+                logger.error(f"HTTP client error for {url}: {e}")
+                raise Exception(f"HTTP client error: {e}")
 
     async def get_instance_info(self):
         """Get instance information from Incus API"""
@@ -150,9 +182,7 @@ class IncusConsoleProxy:
             unix_path = host.split(":/")[0]
             ws_url = f"ws+unix:{unix_path}:/1.0/operations/{operation_id}/websocket?secret={console_secret}&project={self.project}"
         else:
-            # Handle TCP connection
-            if ':' not in host:
-                host = f"{host}:8443"
+            # For HTTPS connections, use the host directly since it's already properly formatted
             ws_url = f"wss://{host}/1.0/operations/{operation_id}/websocket?secret={console_secret}&project={self.project}"
 
         # Build the command with proper SSL handling
@@ -299,9 +329,28 @@ def get_current_remote():
                               capture_output=True, text=True, check=True)
         for line in result.stdout.splitlines():
             if '(current)' in line:
-                remote = line.split(',')[0].replace(' (current)', '')
-                url = line.split(',')[1]
-                return url if url.startswith('http') else f"unix:/var/lib/incus/unix.socket"
+                parts = line.split(',')
+                remote = parts[0].replace(' (current)', '')
+                url = parts[1]
+                
+                # Handle unix socket
+                if not url.startswith(('http://', 'https://')):
+                    return "unix:/var/lib/incus/unix.socket"
+                
+                # Parse URL to handle various formats
+                parsed = urllib.parse.urlparse(url)
+                host = parsed.netloc or parsed.path  # path for cases without //
+                
+                # Add scheme if missing
+                if not url.startswith(('http://', 'https://')):
+                    url = f"https://{host}"
+                
+                # Add port if missing
+                if ':' not in host:
+                    url = f"{url}:8443"
+                
+                return url
+                
         return "unix:/var/lib/incus/unix.socket"  # fallback
     except subprocess.CalledProcessError:
         return "unix:/var/lib/incus/unix.socket"  # fallback
