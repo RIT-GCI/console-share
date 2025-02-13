@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Console Share
+Comment=Remote console sharing tool
+Exec=/usr/bin/console-share
+Icon=utilities-terminal
+Terminal=false
+Categories=System;RemoteAccess;Network;
+Keywords=console;share;remote;
