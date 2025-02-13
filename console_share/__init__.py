@@ -456,15 +456,17 @@ def get_default_project():
         return "default"  # fallback
 
 def get_instances():
-    """Get list of all instances"""
+    """Get list of all instances with their types"""
     try:
         result = subprocess.run(['incus', 'list', '-f', 'csv'], 
                               capture_output=True, text=True, check=True)
         instances = []
         for line in result.stdout.splitlines():
             if line and not line.startswith('NAME,'):  # Skip header
-                instance_name = line.split(',')[0]
-                instances.append(instance_name)
+                parts = line.split(',')
+                instance_name = parts[0]
+                instance_type = parts[1]  # TYPE column from incus list
+                instances.append((instance_name, instance_type))
         return instances
     except subprocess.CalledProcessError:
         return []
@@ -494,8 +496,10 @@ def generate_config():
 
     # Start port assignments from 8001
     base_port = 8001
-    for i, instance in enumerate(instances):
+    for i, (instance, instance_type) in enumerate(instances):
         section = f"proxy{i+1}"
+        # Set console_type based on instance type
+        console_type = 'vga' if instance_type == 'VIRTUAL-MACHINE' else 'shell'
         config[section] = {
             'instance': instance,
             'port': str(base_port + i),
@@ -506,7 +510,7 @@ def generate_config():
             '# For VMs: vga (default) or shell': '',
             '# vga: Uses SPICE/VGA console (recommended for VMs)': '',
             '# shell: Uses incus exec to provide a shell': '',
-            'console_type': 'shell'  # Will be overridden to vga for VMs by default
+            'console_type': console_type
         }
 
     with open(DEFAULT_CONFIG_PATH, 'w') as f:
