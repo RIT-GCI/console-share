@@ -1,0 +1,13 @@
+Source: console-share
+Section: utils
+Priority: optional
+Maintainer: Forrest Fuqua <fffics@rit.edu>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+
+Package: console-share
+Architecture: all
+Depends: ${misc:Depends}, zenity, jq, socat, virt-viewer
+Description: Incus Console Sharing Tool
+ A utility for sharing Incus container and VM consoles
+ over the network using systemd user services.

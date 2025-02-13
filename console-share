@@ -1,0 +1,444 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# Debug logging function
+debug_log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $*" >&2
+}
+
+# Set display for UI operations
+export DISPLAY=:10
+debug_log "Set DISPLAY=$DISPLAY for UI operations"
+
+debug_log "Script started"
+
+# Find required binaries
+debug_log "Finding required binaries..."
+ZENITY_BIN=$(command -v zenity || echo "/usr/bin/zenity")
+JQ_BIN=$(command -v jq || echo "/usr/bin/jq")
+INCUS_BIN=$(command -v incus || echo "/opt/incus/bin/incus")
+SOCAT_BIN=$(command -v socat || echo "/usr/bin/socat")
+REMOTE=$(command -v remote-viewer || echo "/usr/bin/remote-viewer")
+
+debug_log "Found binaries:"
+debug_log "  zenity: $ZENITY_BIN"
+debug_log "  jq: $JQ_BIN"
+debug_log "  incus: $INCUS_BIN"
+debug_log "  socat: $SOCAT_BIN"
+debug_log "  remote-viewer: $REMOTE"
+
+# Check required commands
+for cmd in "$ZENITY_BIN" "$JQ_BIN" "$INCUS_BIN" "$SOCAT_BIN"; do
+    if [ ! -x "$cmd" ]; then
+        debug_log "Error: $cmd is not installed or not executable"
+        "$ZENITY_BIN" --error --text="$(basename "$cmd") is not installed or not executable. Exiting."
+        exit 1
+    fi
+done
+
+# Use XDG directories
+debug_log "Setting up XDG directories..."
+XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+USER_UNIT_DIR="${XDG_CONFIG_HOME}/systemd/user"
+# When installed as a package, scripts are in /usr/bin
+if [ -f "/usr/bin/console-vga-proxy" ]; then
+    SCRIPT_DIR="/usr/bin"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+debug_log "Using directories:"
+debug_log "  XDG_CONFIG_HOME: $XDG_CONFIG_HOME"
+debug_log "  XDG_RUNTIME_DIR: $XDG_RUNTIME_DIR"
+debug_log "  USER_UNIT_DIR: $USER_UNIT_DIR"
+debug_log "  SCRIPT_DIR: $SCRIPT_DIR"
+
+
+# Function to find a free port between 20000 and 30000
+find_free_port() {
+    while :; do
+        port=$((RANDOM % 10000 + 20000))
+        debug_log "Checking port: $port"
+        if ! ss -lntu | awk '{print $5}' | grep -q ":$port\$"; then
+            debug_log "Found free port: $port"
+            echo "$port"
+            return
+        fi
+        debug_log "Port $port is in use, trying another"
+    done
+}
+
+# Clean up function to stop and remove previous systemd unit files
+clean_systemd_units() {
+    debug_log "Starting systemd unit cleanup..."
+    
+    debug_log "Disabling services..."
+    systemctl --user disable incus-console-*.service socat-incus-{vga,console,shell}-*.service 2>/dev/null || true
+    
+    debug_log "Stopping services..."
+    systemctl --user stop incus-console-*.service socat-incus-{vga,console,shell}-*.service 2>/dev/null || true
+    
+    debug_log "Removing service files..."
+    rm -f "$USER_UNIT_DIR"/incus-console-*.service
+    rm -f "$USER_UNIT_DIR"/socat-incus-vga-*.service
+    rm -f "$USER_UNIT_DIR"/socat-incus-console-*.service
+    rm -f "$USER_UNIT_DIR"/socat-incus-shell-*.service
+    
+    debug_log "Cleaning up runtime files..."
+    rm -f "${XDG_RUNTIME_DIR}"/incus_*_{vga,console}.log
+    
+    debug_log "Reloading systemd daemon..."
+    systemctl --user daemon-reload
+    
+    debug_log "Cleanup completed"
+}
+
+# Retrieve instance list with types
+debug_log "Retrieving instance list from incus..."
+instance_data=$("$INCUS_BIN" list -f json)
+if [ -z "$instance_data" ]; then
+    debug_log "Error: No instances found"
+    "$ZENITY_BIN" --error --text="No instances found."
+    exit 1
+fi
+debug_log "Found instances: $(echo "$instance_data" | "$JQ_BIN" -r '.[].name')"
+
+# Build checklist data
+debug_log "Building checklist data..."
+checklist_data=()
+while IFS= read -r instance_info; do
+    name=$(echo "$instance_info" | "$JQ_BIN" -r '.name')
+    type=$(echo "$instance_info" | "$JQ_BIN" -r '.type')
+    debug_log "Processing instance: $name (type: $type)"
+    
+    if [ "$type" = "container" ]; then
+        debug_log "Adding container options for $name"
+        checklist_data+=("FALSE" "$name" "Console")
+        checklist_data+=("FALSE" "$name" "Shell")
+    else
+        debug_log "Adding VM options for $name"
+        checklist_data+=("FALSE" "$name" "VGA Console")
+        checklist_data+=("FALSE" "$name" "Shell")
+    fi
+done < <(echo "$instance_data" | "$JQ_BIN" -c '.[]')
+
+# Show checklist dialog
+debug_log "Displaying selection dialog..."
+selected=$("$ZENITY_BIN" --list \
+    --title="Incus Console Proxy Setup" \
+    --text="Select Console and/or Shell access for each instance:" \
+    --checklist \
+    --column="Select" \
+    --column="Instance" \
+    --column="Type" \
+    --print-column=2,3 \
+    "${checklist_data[@]}" \
+    --width=400 --height=800 \
+    --separator="|")
+
+if [ -z "$selected" ]; then
+    debug_log "No selections made, exiting"
+    exit 0
+fi
+debug_log "User selections: $selected"
+
+# Clean up existing units first
+debug_log "Starting cleanup of existing units..."
+clean_systemd_units
+
+# Initialize shell_enabled array
+declare -A shell_enabled
+for inst in $(echo "$instance_data" | "$JQ_BIN" -r '.[].name'); do
+    shell_enabled[$inst]=0
+done
+
+# Process selections
+debug_log "Processing user selections..."
+selected_instances=()
+
+IFS='|' read -r -a selections <<< "$selected"
+# Now, each pair is instance and type (in order)
+for (( i=0; i<${#selections[@]}; i+=2 )); do
+    instance="${selections[i]}"
+    type="${selections[i+1]}"
+    
+    debug_log "Processing selection: instance=$instance, type=$type"
+    
+    if [[ "$type" == "VGA Console" || "$type" == "Console" ]]; then
+        selected_instances+=("$instance")
+        debug_log "Added console for $instance"
+    fi
+    if [[ "$type" == "Shell" ]]; then
+        shell_enabled[$instance]=1
+        debug_log "Enabled shell for $instance"
+    fi
+done
+
+# Remove duplicates from selected_instances
+mapfile -t selected_instances < <(printf '%s\n' "${selected_instances[@]}" | sort -u)
+debug_log "Unique selected instances: ${selected_instances[*]}"
+
+# Get instance types for service generation
+debug_log "Getting instance types..."
+declare -A instance_types
+while IFS= read -r instance_info; do
+    name=$(echo "$instance_info" | "$JQ_BIN" -r '.name')
+    type=$(echo "$instance_info" | "$JQ_BIN" -r '.type')
+    instance_types[$name]=$type
+    debug_log "Instance type: $name -> $type"
+done < <(echo "$instance_data" | "$JQ_BIN" -c '.[]')
+
+# Create user systemd directory if it doesn't exist
+debug_log "Creating systemd user directory: $USER_UNIT_DIR"
+if ! mkdir -p "$USER_UNIT_DIR"; then
+    debug_log "Error: Failed to create directory: $USER_UNIT_DIR"
+    "$ZENITY_BIN" --error --text="Failed to create systemd user directory: $USER_UNIT_DIR"
+    exit 1
+fi
+debug_log "Verifying directory exists and is writable..."
+if [ ! -d "$USER_UNIT_DIR" ]; then
+    debug_log "Error: Directory was not created: $USER_UNIT_DIR"
+    "$ZENITY_BIN" --error --text="Failed to verify systemd user directory: $USER_UNIT_DIR"
+    exit 1
+fi
+if [ ! -w "$USER_UNIT_DIR" ]; then
+    debug_log "Error: Directory is not writable: $USER_UNIT_DIR"
+    "$ZENITY_BIN" --error --text="Systemd user directory is not writable: $USER_UNIT_DIR"
+    exit 1
+fi
+debug_log "Directory verified successfully"
+
+# Arrays to store port allocations
+declare -A vga_ports
+declare -A shell_ports
+
+# Generate unit files directly in user systemd directory
+debug_log "Generating systemd unit files..."
+for inst in "${selected_instances[@]}"; do
+    debug_log "Processing instance: $inst"
+    
+    # Console unit file
+    console_unit_file="$USER_UNIT_DIR/incus-console-${inst}.service"
+    console_cmd="$INCUS_BIN console --force"
+    proxy_type="console"
+    if [ "${instance_types[$inst]}" = "virtual-machine" ]; then
+        console_cmd="$console_cmd --type=vga"
+        proxy_type="vga"
+    fi
+    debug_log "Creating console unit file: $console_unit_file"
+    debug_log "Console command: $console_cmd"
+    
+    debug_log "Writing console unit file: $console_unit_file"
+    if ! cat > "$console_unit_file" <<EOF
+[Unit]
+Description=Incus Console Launcher for $inst
+
+[Service]
+Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+Environment=DISPLAY=:10
+ExecStart=/bin/bash -c 'sudo chmod 000 ${REMOTE}; $console_cmd $inst | /usr/bin/tee ${XDG_RUNTIME_DIR}/incus_${inst}_console.log'
+ExecStopPost=/bin/bash -c 'sudo chmod 755 ${REMOTE};'
+ExecStopPost=/bin/bash -c 'sudo chmod +x ${REMOTE};'
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+    then
+        debug_log "Error: Failed to write console unit file: $console_unit_file"
+        "$ZENITY_BIN" --error --text="Failed to write console unit file: $console_unit_file"
+        exit 1
+    fi
+    debug_log "Verifying console unit file was written..."
+    if [ ! -f "$console_unit_file" ]; then
+        debug_log "Error: Console unit file was not created: $console_unit_file"
+        "$ZENITY_BIN" --error --text="Failed to verify console unit file: $console_unit_file"
+        exit 1
+    fi
+
+    # Console proxy unit file
+    vga_ports[$inst]=$(find_free_port)
+    console_proxy_unit_file="$USER_UNIT_DIR/socat-incus-${proxy_type}-${inst}.service"
+    debug_log "Creating proxy unit file: $console_proxy_unit_file (type: $proxy_type, port: ${vga_ports[$inst]})"
+    
+    # Use different proxy command based on instance type
+    proxy_cmd=""
+    if [ "${instance_types[$inst]}" = "virtual-machine" ]; then
+        proxy_cmd="${SCRIPT_DIR}/console-vga-proxy $inst ${vga_ports[$inst]}"
+    else
+        proxy_cmd="$SOCAT_BIN -dddd TCP-LISTEN:${vga_ports[$inst]},fork EXEC:\"$INCUS_BIN console --force $inst\",rawer,pty,echo=0"
+    fi
+    
+    debug_log "Writing proxy unit file: $console_proxy_unit_file"
+    if ! cat > "$console_proxy_unit_file" <<EOF
+[Unit]
+Description=Socat proxy for Incus ${proxy_type} Console for $inst
+After=incus-console-${inst}.service
+
+[Service]
+Environment=XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}
+Environment=DISPLAY=:10
+ExecStart=$proxy_cmd
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+    then
+        debug_log "Error: Failed to write proxy unit file: $console_proxy_unit_file"
+        "$ZENITY_BIN" --error --text="Failed to write proxy unit file: $console_proxy_unit_file"
+        exit 1
+    fi
+    debug_log "Verifying proxy unit file was written..."
+    if [ ! -f "$console_proxy_unit_file" ]; then
+        debug_log "Error: Proxy unit file was not created: $console_proxy_unit_file"
+        "$ZENITY_BIN" --error --text="Failed to verify proxy unit file: $console_proxy_unit_file"
+        exit 1
+    fi
+
+    # Shell proxy unit file if selected
+    if [ "${shell_enabled[$inst]:-0}" = "1" ]; then
+        shell_ports[$inst]=$(find_free_port)
+        shell_unit_file="$USER_UNIT_DIR/socat-incus-shell-${inst}.service"
+        debug_log "Creating shell unit file: $shell_unit_file (port: ${shell_ports[$inst]})"
+        
+        debug_log "Writing shell unit file: $shell_unit_file"
+        if ! cat > "$shell_unit_file" <<EOF
+[Unit]
+Description=Socat proxy for Incus Shell for $inst
+
+[Service]
+Environment=DISPLAY=:10
+ExecStart=$SOCAT_BIN -dddd TCP-LISTEN:${shell_ports[$inst]},fork EXEC:"$INCUS_BIN shell $inst",rawer,pty,echo=0
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+EOF
+        then
+            debug_log "Error: Failed to write shell unit file: $shell_unit_file"
+            "$ZENITY_BIN" --error --text="Failed to write shell unit file: $shell_unit_file"
+            exit 1
+        fi
+        debug_log "Verifying shell unit file was written..."
+        if [ ! -f "$shell_unit_file" ]; then
+            debug_log "Error: Shell unit file was not created: $shell_unit_file"
+            "$ZENITY_BIN" --error --text="Failed to verify shell unit file: $shell_unit_file"
+            exit 1
+        fi
+    else
+        shell_ports[$inst]="-"
+        debug_log "No shell service for $inst"
+    fi
+done
+
+# Reload systemd and start services
+debug_log "Reloading systemd daemon..."
+systemctl --user daemon-reload
+
+# Enable and start services, checking for errors
+debug_log "Starting services..."
+for inst in "${selected_instances[@]}"; do
+    debug_log "Starting services for instance: $inst"
+    
+    # Start console service
+    debug_log "Enabling and starting console service for $inst"
+    if ! systemctl --user enable --now "incus-console-${inst}.service"; then
+        debug_log "Error: Failed to start console service for $inst"
+        "$ZENITY_BIN" --error --text="Failed to start console service for $inst. Check journalctl --user -u incus-console-${inst}.service for details."
+        continue
+    fi
+    
+    # Start proxy service
+    proxy_type="vga"
+    [ "${instance_types[$inst]}" = "container" ] && proxy_type="console"
+    debug_log "Enabling and starting $proxy_type proxy service for $inst"
+    if ! systemctl --user enable --now "socat-incus-${proxy_type}-${inst}.service"; then
+        debug_log "Error: Failed to start proxy service for $inst"
+        "$ZENITY_BIN" --error --text="Failed to start proxy service for $inst. Check journalctl --user -u socat-incus-${proxy_type}-${inst}.service for details."
+        continue
+    fi
+    
+    # Start shell service if enabled
+    if [ "${shell_enabled[$inst]}" = "1" ]; then
+        debug_log "Enabling and starting shell service for $inst"
+        if ! systemctl --user enable --now "socat-incus-shell-${inst}.service"; then
+            debug_log "Error: Failed to start shell service for $inst"
+            "$ZENITY_BIN" --error --text="Failed to start shell service for $inst. Check journalctl --user -u socat-incus-shell-${inst}.service for details."
+        fi
+    fi
+done
+
+# Print connection details
+debug_log "Getting host IP..."
+IP=$(hostname -I | awk '{print $1}')
+debug_log "Host IP: $IP"
+
+# Create formatted output
+debug_log "Formatting connection details..."
+DETAILS_FILE="$HOME/Desktop/incus_connections.txt"
+
+(
+
+format_connection_details() {
+    local ip="$1"
+    cat << EOF
+=== Incus Connection Details ===
+Generated: $(date '+%Y-%m-%d %H:%M:%S')
+Host: $(hostname) ($ip)
+
+Connection Instructions:
+- Use telnet for console/shell access
+- Use remote-viewer for VM graphical console
+
+Note: This information has been saved to $DETAILS_FILE
+You can copy the text below for future reference.
+
+Available Connections:
+$(printf '%0.s=' {1..20})
+
+
+EOF
+}
+
+format_connection_details "$IP"
+
+for inst in "${selected_instances[@]}"; do
+    type="${instance_types[$inst]}"
+    console_port="${vga_ports[$inst]}"
+    shell_port="${shell_ports[$inst]}"
+    
+    echo -e "\nInstance: $inst ($type)"
+    printf '%0.s-' {1..50}
+    echo -e "\n"
+    
+    if [ "$type" = "virtual-machine" ]; then
+        echo "VGA Console:"
+        echo "  Port: $console_port"
+        echo "  Connect: remote-viewer spice://$IP:$console_port"
+    else
+        echo "Console:"
+        echo "  Port: $console_port"
+        echo "  Connect: socat TCP-CONNECT:$IP:$console_port -,rawer,echo=0"
+    fi
+    
+    if [ "${shell_enabled[$inst]}" = "1" ]; then
+        echo -e "\nShell Access:"
+        echo "  Port: $shell_port"
+        echo "  Connect: socat TCP-CONNECT:$IP:$shell_port -,rawer,echo=0"
+    fi
+    
+    echo ""
+
+done
+) | tee "$DETAILS_FILE" | "$ZENITY_BIN" --text-info --title="Incus Connection Details" \
+    --width=800 --height=600 --font="monospace" \
+    --ok-label="Close" \
+    --text="Connection details have been saved to your Desktop.\nYou can copy the text below:"
+
+debug_log "Connection details saved to: $DETAILS_FILE"
+chmod 600 "$DETAILS_FILE"
+
+debug_log "Script completed successfully"

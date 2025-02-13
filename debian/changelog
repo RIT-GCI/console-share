@@ -1,0 +1,7 @@
+console-share (1.0.0) unstable; urgency=medium
+
+  * Initial release
+  * Support for sharing Incus container and VM consoles
+  * Updated VGA proxy script path to console-vga-proxy
+
+ -- Forrest Fuqua <fffics@rit.edu>  Wed, 13 Feb 2024 22:04:00 +0000

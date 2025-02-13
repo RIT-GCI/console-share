@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_install:
+	dh_auto_install
+	mkdir -p debian/console-share/usr/bin
+	cp console-share debian/console-share/usr/bin/
+	cp console-vga-proxy debian/console-share/usr/bin/
+	chmod 755 debian/console-share/usr/bin/console-share
+	chmod 755 debian/console-share/usr/bin/console-vga-proxy

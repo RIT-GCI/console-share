@@ -1,0 +1,81 @@
+#!/bin/bash
+# Usage: vga_proxy.sh <instance> <tcp_port>
+
+set -euo pipefail
+REMOTE=$(command -v remote-viewer || echo "/usr/bin/remote-viewer")
+
+# Debug logging function
+debug_log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [DEBUG] $*" >&2
+}
+
+debug_log "Script started with arguments: $*"
+
+if [ "$#" -ne 2 ]; then
+    debug_log "Error: Invalid number of arguments"
+    echo "Usage: $0 <instance> <tcp_port>"
+    exit 1
+fi
+
+instance="$1"
+tcp_port="$2"
+debug_log "Instance: $instance, TCP Port: $tcp_port"
+
+# Use XDG_RUNTIME_DIR for temporary files, fallback to /tmp
+runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
+temp_file="${runtime_dir}/incus_${instance}_console.log"
+debug_log "Using runtime directory: $runtime_dir"
+debug_log "Temporary file path: $temp_file"
+
+# Find socat binary
+SOCAT_BIN=$(command -v socat || echo "/usr/bin/socat")
+debug_log "Found socat binary at: $SOCAT_BIN"
+if [ ! -x "$SOCAT_BIN" ]; then
+    debug_log "Error: socat binary not found or not executable at $SOCAT_BIN"
+    echo "Error: socat binary not found or not executable"
+    exit 1
+fi
+
+# Wait until the temp file exists and contains the spice+unix socket info
+debug_log "Waiting for temporary file and socket info..."
+timeout=30
+while [ $timeout -gt 0 ]; do
+    if [ -f "$temp_file" ]; then
+        debug_log "Found temporary file"
+        sock=$(grep -o "spice+unix://[^ ]\+" "$temp_file")
+        if [ -n "$sock" ]; then
+            debug_log "Found socket info: $sock"
+            break
+        fi
+        debug_log "Socket info not found in file yet"
+    else
+        debug_log "Temporary file not found yet. Remaining attempts: $timeout"
+    fi
+    sleep 1
+    ((timeout--))
+done
+
+if [ -z "${sock:-}" ]; then
+    debug_log "Error: Failed to obtain unix socket info after ${timeout}s"
+    echo "Failed to obtain unix socket info for $instance after ${timeout}s"
+    exit 1
+fi
+
+# Remove the "spice+unix://" prefix to get the actual socket path
+socket_path=$(echo "$sock" | sed 's/spice+unix:\/\/\///')
+debug_log "Extracted socket path: $socket_path"
+
+# Cleanup function
+cleanup() {
+    debug_log "Running cleanup..."
+    debug_log "Removing temporary file: $temp_file"
+    rm -f "$temp_file"
+    debug_log "Cleanup completed"
+}
+trap cleanup EXIT
+
+# Start socat
+debug_log "Starting socat with TCP port $tcp_port and unix socket $socket_path"
+(sleep 30 && sudo chmod 755 ${REMOTE})&
+(sleep 30 && sudo chmod +x ${REMOTE})&
+exec "$SOCAT_BIN" TCP-LISTEN:"$tcp_port",fork UNIX-CONNECT:"/$socket_path"

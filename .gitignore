@@ -1,0 +1,20 @@
+# Debian package build artifacts
+debian/.debhelper/
+debian/console-share/
+debian/console-share.substvars
+debian/console-share.debhelper.log
+debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper
+debian/*.debhelper.log
+debian/*.substvars
+
+# Generated packages
+*.deb
+*.changes
+*.buildinfo
+
+# Editor and system files
+*~
+.*.swp
+.DS_Store
