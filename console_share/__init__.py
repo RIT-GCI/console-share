@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import ssl
 import sys
 import aiohttp
@@ -256,7 +257,7 @@ class IncusConsoleProxy:
             
         return cmd
 
-    async def start_proxy(self):
+    async def start_proxy(self, manager):
         """Start the websocat proxy with retry logic"""
         while True:
             try:
@@ -277,6 +278,9 @@ class IncusConsoleProxy:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
+                
+                # Add process to manager's active processes list
+                manager.active_processes.append(process)
                 
                 logger.info(f"[{self.instance}] Proxy started on 0.0.0.0:{self.listen_port}")
                 if self.is_container:
@@ -309,6 +313,8 @@ class IncusConsoleProxy:
                 if 'process' in locals():
                     process.terminate()
                     await process.wait()
+                    if process in manager.active_processes:
+                        manager.active_processes.remove(process)
                 break
             
             except Exception as e:
@@ -316,6 +322,8 @@ class IncusConsoleProxy:
                 if 'process' in locals():
                     process.terminate()
                     await process.wait()
+                    if process in manager.active_processes:
+                        manager.active_processes.remove(process)
                 
                 self.retry_count += 1
                 if self.retry_count > MAX_RETRIES:
@@ -330,6 +338,7 @@ class ProxyManager:
         self.config_path = config_path
         self.config = configparser.ConfigParser()
         self.proxies = []
+        self.active_processes = []
 
     def load_config(self):
         """Load configuration from INI file"""
@@ -403,21 +412,42 @@ class ProxyManager:
         print(tabulate(table_data, headers=headers, tablefmt="grid"))
         print()  # Add a blank line after the table
 
+    async def cleanup(self):
+        """Cleanup all proxy processes"""
+        logger.info("\nCleaning up proxy processes...")
+        for process in self.active_processes:
+            try:
+                process.terminate()
+                await process.wait()
+            except Exception as e:
+                logger.error(f"Error terminating process: {e}")
+        self.active_processes.clear()
+
     async def start_all(self):
         """Start all proxy instances"""
-        # Create and start all proxy tasks
-        tasks = []
-        for proxy in self.proxies:
-            tasks.append(asyncio.create_task(proxy.start_proxy()))
-        
-        # Wait 10 seconds for proxies to initialize
-        await asyncio.sleep(2)
-        
-        # Print instance table
-        self.print_instance_table()
-        
-        # Continue running the tasks
-        await asyncio.gather(*tasks)
+        # Set up signal handlers
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_event_loop().add_signal_handler(
+                sig,
+                lambda: asyncio.create_task(self.cleanup())
+            )
+
+        try:
+            # Create and start all proxy tasks
+            tasks = []
+            for proxy in self.proxies:
+                tasks.append(asyncio.create_task(proxy.start_proxy(self)))
+            
+            # Wait for proxies to initialize
+            await asyncio.sleep(2)
+            
+            # Print instance table
+            self.print_instance_table()
+            
+            # Continue running the tasks
+            await asyncio.gather(*tasks)
+        finally:
+            await self.cleanup()
 
 def get_current_remote():
     """Get the current remote from incus remote ls"""
