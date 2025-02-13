@@ -466,7 +466,7 @@ def main():
         logger.info("\nShutting down...")
     except FileNotFoundError as e:
         logger.error(f"Error: {e}")
-        logger.info("Use --create-config to create a default configuration file")
+        logger.info("Use --create-config to create a default configuration file or use --generate to try and auto-create one for you.")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Error: {e}")
