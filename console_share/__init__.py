@@ -354,21 +354,33 @@ class ProxyManager:
         print(tabulate(table_data, headers=headers, tablefmt="grid"))
         print()  # Add a blank line after the table
 
+    def cleanup(self):
+        """Kill all websocat processes"""
+        try:
+            subprocess.run(['pkill', '-f', 'websocat_max'], check=False)
+            logger.info("Killed all websocat processes")
+        except Exception as e:
+            logger.error(f"Error killing websocat processes: {e}")
+
     async def start_all(self):
         """Start all proxy instances"""
-        # Create and start all proxy tasks
-        tasks = []
-        for proxy in self.proxies:
-            tasks.append(asyncio.create_task(proxy.start_proxy()))
-        
-        # Wait 10 seconds for proxies to initialize
-        await asyncio.sleep(2)
-        
-        # Print instance table
-        self.print_instance_table()
-        
-        # Continue running the tasks
-        await asyncio.gather(*tasks)
+        try:
+            # Create and start all proxy tasks
+            tasks = []
+            for proxy in self.proxies:
+                tasks.append(asyncio.create_task(proxy.start_proxy()))
+            
+            # Wait 10 seconds for proxies to initialize
+            await asyncio.sleep(2)
+            
+            # Print instance table
+            self.print_instance_table()
+            
+            # Continue running the tasks
+            await asyncio.gather(*tasks)
+        finally:
+            # Ensure cleanup happens on exit
+            self.cleanup()
 
 def get_current_remote():
     """Get the current remote from incus remote ls"""
@@ -488,6 +500,14 @@ def create_default_config():
         logger.info("Please edit the config file with your instance settings")
         sys.exit(0)
 
+def signal_handler(manager):
+    """Handle shutdown signals"""
+    def _handler(signum, frame):
+        logger.info("\nShutting down...")
+        manager.cleanup()
+        sys.exit(0)
+    return _handler
+
 def main():
     parser = argparse.ArgumentParser(description='Proxy Incus console to TCP using websocat4')
     parser.add_argument('--config', default=DEFAULT_CONFIG_PATH, help=f'Config file path (default: {DEFAULT_CONFIG_PATH})')
@@ -509,9 +529,14 @@ def main():
         # Create and start proxy manager
         manager = ProxyManager(args.config)
         manager.load_config()
+        
+        # Set up signal handlers
+        import signal
+        handler = signal_handler(manager)
+        signal.signal(signal.SIGINT, handler)
+        signal.signal(signal.SIGTERM, handler)
+        
         asyncio.run(manager.start_all())
-    except KeyboardInterrupt:
-        logger.info("\nShutting down...")
     except FileNotFoundError as e:
         logger.error(f"Error: {e}")
         logger.info("Use --create-config to create a default configuration file or use --generate to try and auto-create one for you.")
