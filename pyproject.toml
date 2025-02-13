@@ -5,17 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "console-share"
 version = "0.1.0"
-description = "Proxy Incus console to TCP using websocat"
+authors = [
+    { name = "JetBalsa", email = "sage@jetbalsa.com" }
+]
+description = "Network proxy tool for Incus console and shell connections"
 readme = "README.md"
-requires-python = ">=3.7"
-license = "MIT"
+requires-python = ">=3.8"
 dependencies = [
-    "aiohttp>=3.8.0",
-    "tabulate>=0.9.0"
+    "click>=8.0.0",
+    "tomli>=2.0.0",
+    "tomli-w>=1.0.0",
+    "psutil>=5.8.0"
 ]
 
 [project.scripts]
-console-share = "console_share:main"
+console-share = "console_share.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["console_share"]
+packages = ["src/console_share"]

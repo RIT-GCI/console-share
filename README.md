@@ -1,149 +1,144 @@
 # Console Share
 
-A Python utility to proxy Incus container and VM consoles to TCP ports using websocat.
+A network proxy tool for Incus console and shell connections.
 
 ## Features
 
-- Supports both container console and VM VGA/SPICE console
-- Configurable via INI file
-- Multiple console proxies can run simultaneously
-- Automatic retry on connection failures
-- SSL certificate support for secure connections
-- Automatic instance type detection (VM vs Container)
-- Auto-configuration generation from existing Incus setup
-- Smart network interface detection
-- Tabulated instance listing with connection commands
-- Robust error handling with automatic retries
-- DNS caching for improved performance
-
-## Prerequisites
-
-- Python 3.7 or higher
-- Incus installed and configured
-- websocat binary (included in the package, source: https://github.com/vi/websocat)
+- Proxy Incus shell connections
+- Proxy Incus console connections (both VGA and regular)
+- Network forwarding of local Unix sockets
+- Configurable proxy settings
+- PATH manipulation for VGA console support
 
 ## Installation
 
-### From Git Repository
-
 ```bash
-pip install git+https://github.com/RIT-GCI/console-share
-```
+# Install directly from GitHub
+pip install git+https://github.com/jetbalsa/console-share.git
 
-### Using pipx (recommended)
-
-```bash
-pipx install console-share
-```
-
-### Using pip
-
-```bash
-pip install console-share
+# Or with pipx for isolated installation
+pipx install git+https://github.com/jetbalsa/console-share.git
 ```
 
 ## Configuration
 
-Create a configuration file (default: `console-share.ini`):
+You can automatically generate a configuration file based on your current Incus instances:
 
-```ini
-[global]
-remote = unix:/var/lib/incus/unix.socket
-project = default
-
-[proxy1]
-instance = my-container
-port = 8001
-
-[proxy2]
-instance = my-vm
-port = 8002
-```
-
-### Configuration Options
-
-#### Global Section
-- `remote`: Incus remote (default: unix:/var/lib/incus/unix.socket)
-- `project`: Incus project (default: default)
-
-#### Proxy Sections
-- `instance`: Name of the Incus instance
-- `port`: TCP port to listen on
-- `remote`: (optional) Override global remote
-- `project`: (optional) Override global project
-
-## Usage
-
-1. Auto-generate config from your current Incus setup:
 ```bash
 console-share --generate
 ```
 
-Or create default config:
-```bash
-console-share --create-config
+This will create a config file at `~/.config/console-share/config.toml` with appropriate connection types for each instance (VGA console for virtual machines, shell for containers).
+
+Example generated config:
+
+```toml
+[proxy]
+# Bind address for proxied connections
+bind_address = "0.0.0.0"
+# Starting port for proxy connections
+start_port = 8000
+
+[console]
+# Directory for temporary unix sockets
+socket_dir = "/tmp/console-share"
+# Path to fake remote-viewer binary
+remote_viewer_path = "/tmp/console-share/bin"
+
+[shell]
+# Default terminal type
+term = "xterm-256color"
+
+[instances]
+# Auto-generated instance configurations
+"ubuntu-vm" = { type = "vga", port = null, enabled = true }
+"alpine-container" = { type = "shell", port = null, enabled = true }
 ```
 
-2. Edit the config file with your instance settings
+The configuration is generated based on your current project and remote settings, and automatically detects the appropriate connection type for each instance.
 
-3. Run the proxy:
+## Usage
+
 ```bash
-console-share
+# Proxy a shell connection
+console-share shell <instance>
+
+# Proxy a console connection
+console-share console <instance>
+
+# Proxy a VGA console connection
+console-share console <instance> --vga
+
+# List active proxy connections
+console-share list
 ```
 
-Additional options:
-- `--config`: Specify custom config file path
-- `--debug`: Enable debug logging
+## How it Works
 
-## Accessing Consoles
+The tool intercepts Incus console and shell connections to enable network proxying:
 
-### For Containers
-Use telnet to connect to the proxy port:
+### Shell Connections
+Uses socat to forward the Incus shell connection over TCP, allowing remote access via standard terminal clients.
+
+### Console Connections
+- Regular console: Directly forwards the console connection using socat's exec feature
+- VGA console: Intercepts the remote-viewer command by injecting a PATH override, captures the Unix socket, and forwards it over TCP
+
+### Implementation Details
+
+1. Incus data is gathered using CSV output format (`incus -f csv`) for reliable parsing
+2. Default project and remote are auto-detected by looking for "(current)" marker in command output
+3. VGA console handling:
+   - Creates a fake remote-viewer script in a temporary directory
+   - Uses PATH manipulation to intercept incus's remote-viewer call
+   - Captures the Unix socket path from the intercepted command
+   - Forwards the socket using socat for network access
+4. Shell and regular console connections:
+   - Direct socat forwarding using EXEC mode
+   - PTY allocation for proper terminal handling
+   - Signal passing for CTRL+C support
+5. Configuration:
+   - TOML-based configuration file
+   - XDG compliant config location
+   - Automatic port allocation
+   - Customizable bind address and socket directories
+
+## Requirements
+
+- Python 3.8+
+- Incus CLI
+- socat
+- netcat (optional, for testing)
+
+## Development
+
 ```bash
-telnet localhost <port>
+# Clone the repository
+git clone https://github.com/jetbalsa/console-share.git
+cd console-share
+
+# Install in development mode
+pip install -e .
+
+# Run tests
+pytest
 ```
 
-### For VMs
-Use remote-viewer to connect to the SPICE console:
-```bash
-remote-viewer spice://localhost:<port>
+## Contributing
+
+Pull requests are welcome! Please feel free to submit issues and enhancement requests.
+
+## Prompt History
+
 ```
+1.0:
+Lets make a new project in python, Its going to use the incus command line to get all its data, use incus -f csv for it all, youll get better data, for project and remote you can detect the default if they have the word (current) in them, you can run these commands in the shell to get their outputs now. 
 
-## Notes
+in the python script have a config file we can use to setup proxies for incus console and incus shell, using socat, you are going to have to trick incus console --type=vga for virtual-machines into using a fake remote-viewer so it will drop its unix socket on the system and work from there, this program is going to work by taking those unix sockets and publishing them using socat to the network. 
 
-- The websocat binary is included in the package and does not need to be downloaded separately
-- SSL certificates for Incus are automatically used if found in ~/.config/incus/
-- The proxy will automatically retry on connection failures (max 3 retries with 5 second delay)
-- Multiple instances can be proxied simultaneously using different ports
-- Instance type (VM/Container) is automatically detected
-- Network interfaces are automatically detected for proper IP address display
-- Connection information is displayed in a neat table format
+right now its going the golang findCommand function to do this, find a good way to spoof this, you can run bash commands to test these out as well, maybe a PATH injection or reset would work for this. don't forget, I want this to run via pipx so make a toml for the project and a readme outlining everything I want, I want the python program to be able to proxy incus shell, incus console of both types, if its not a --type=vga on incus console, just use socat exec directly for console connections over telnet.
 
-## FAQ
+1.1:
+update it to allow for a autogeneretion of a config, using --generate take the current active project and remote (so no switching) look at all the instances and set --type=vga for all VIRTUAL-MACHINES and incus shell for containers and write it out to disk
 
-### Q: Help! I'm getting "Error: Failed running forkconsole: attaching to the container failed" over telnet!
-
-A: Ah, the classic "container is giving you the cold shoulder" error! 🥶 Time for the tried-and-true "turn it off and on again" dance:
-
-1. First, do the instance cha-cha:
-   ```bash
-   incus stop your-instance-name
-   incus start your-instance-name
-   ```
-
-2. Then, the proxy polka:
-   ```bash
-   # Stop your console-share process
-   # Start it again with:
-   console-share
-   ```
-
-Remember: Sometimes our digital friends just need a quick nap to feel better! 😴
-
-## License
-
-MIT License
-
-## Disclaimer
-
-⚠️ WARNING: This code was lovingly crafted by an AI that occasionally dreams of electric sheep, powered by $40 worth of Claude API tokens and a dream. While it mostly works, it may occasionally decide to take a coffee break or contemplate the meaning of life. Our rigorous testing process consists entirely of unsuspecting students who will discover bugs in real-time during their assignments (surprise!). Side effects may include unexpected behavior, spontaneous poetry generation, and a slight tendency to catch fire when Mercury is in retrograde. If you're reading this, congratulations! You're now part of our "involuntary beta testing program." Remember: every crash is not a bug, it's a feature waiting to be documented. Use at your own risk, and keep a fire extinguisher handy. No students were harmed in the making of this software (yet). 🔥🤖📚
+```
