@@ -39,11 +39,16 @@ def parse_csv_output(output: str) -> List[List[str]]:
     # Split each line into fields based on status and type markers
     result = []
     for line in output.splitlines():
+        print(f"Parsing line: {line}")  # Debug output
+        
         # Find the status (RUNNING, STOPPED, etc.)
         status_start = next(i for i, c in enumerate(line) if c.isupper())
         name = line[:status_start]
+        print(f"Found name: {name}")  # Debug output
         
         rest = line[status_start:]
+        print(f"Rest of line: {rest}")  # Debug output
+        
         # Find type (CONTAINER or VIRTUAL-MACHINE)
         type_start = rest.find("CONTAINER")
         if type_start == -1:
@@ -51,12 +56,19 @@ def parse_csv_output(output: str) -> List[List[str]]:
         
         if type_start != -1:
             status = rest[:type_start]
+            print(f"Found status: {status}")  # Debug output
+            
             # Extract IP from the middle section
             ip = rest[len(status):type_start].strip()
+            print(f"Found IP: {ip}")  # Debug output
+            
             # Get type and snapshots
             type_and_snapshots = rest[type_start:]
             instance_type = "CONTAINER" if "CONTAINER" in type_and_snapshots else "VIRTUAL-MACHINE"
+            print(f"Found type: {instance_type}")  # Debug output
+            
             snapshots = type_and_snapshots.split(instance_type)[1]
+            print(f"Found snapshots: {snapshots}")  # Debug output
             
             result.append([name, status, ip, instance_type, snapshots])
     
