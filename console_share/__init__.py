@@ -196,7 +196,8 @@ class IncusConsoleProxy:
         # Add container-specific options for better PTY handling
         if self.is_container:
             cmd.extend([
-                "--binary",  # text mode for console
+                "--text",  # text mode for console
+                "--async-stdio",  # better terminal handling
                 "--exit-on-eof",  # proper disconnect handling
             ])
         else:
