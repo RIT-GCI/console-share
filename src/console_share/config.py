@@ -73,10 +73,11 @@ class Config:
         new_config = self.config.copy()
         new_config["instances"] = {}
         
-        for instance in instances:
+        start_port = self.config["proxy"]["start_port"]
+        for i, instance in enumerate(instances):
             instance_config = {
                 "type": "vga" if instance.type == "virtual-machine" else "shell",
-                "port": self.get_next_port(),
+                "port": start_port + i,  # Increment port for each instance
                 "enabled": True
             }
             new_config["instances"][instance.name] = instance_config
