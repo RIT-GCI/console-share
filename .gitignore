@@ -10,7 +10,6 @@ debian/*.debhelper.log
 debian/*.substvars
 
 # Generated packages
-*.deb
 *.changes
 *.buildinfo
 
